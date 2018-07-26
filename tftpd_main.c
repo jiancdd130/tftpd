@@ -27,21 +27,18 @@ void show_help()
 	printf("TFTP Usage: AlbertTftpd path\n");
 }
 
-int parse(int argc, char*argv[])
+void tftpd_parse_path(int argc, char*argv[])
 {
 	if(1 == argc)
 	{
 		getcwd(tftpd_path, sizeof(tftpd_path));
-		return;
+	}
+	else
+	{
+		strncpy(tftpd_path, argv[1], sizeof(tftpd_path)-1);
 	}
 	
-	if(0 == strcmp("--help", argv[1]))
-	{
-		show_help();
-		return;
-	}
-
-	strncpy(tftpd_path, argv[1], sizeof(tftpd_path)-1);
+	printf("path: %s\n", tftpd_path);
 }
 
 /*
@@ -82,7 +79,7 @@ TFTP Formats(TFTP∏Ò Ω)
 */
 enum
 {
-	TFTP_RRQ = 0,
+	TFTP_RRQ = 01,
 	TFTP_WRQ,
 	TFTP_DATA,
 	TFTP_ACK,
@@ -91,8 +88,9 @@ enum
 
 int tftpd_process(char* in_data, int in_len, char *out_data, int *out_len)
 {
-	int op = *(uint16_t *)in_data;
-	
+	uint16_t op = *(uint16_t *)in_data;
+	op = ntohs(op);
+	printf("op=%u\n", op);
 	switch(op)
 	{
 		case TFTP_RRQ:
@@ -101,24 +99,30 @@ int tftpd_process(char* in_data, int in_len, char *out_data, int *out_len)
 			int fd = 0;
 			int len = 0;
 			static int block = 0;
-			
+
 			strcpy(file_name,tftpd_path);
+			strcat(file_name, "/");
 			strcat(file_name, &in_data[2]);
+			
+			printf("file_name %s\n", file_name);
 			fd = open(file_name, O_RDWR);
 			if(fd < 0)
 			{
+				printf("fd=%d\n", fd);
 				return ERR_FILE_NOT_EXISTS;
 			}
 			
 			len = read(fd, out_data + TFTP_HDR_LEN, TFTP_DATA_MAX_LEN);
 			if(len > 0)
 			{
-				*((uint16_t *)out_data) = TFTP_DATA;
-				
-				block++;				
-				*((uint16_t *)out_data) = block;
+				printf("read len = %d\n", len);
+				out_data[0] =0;
+				out_data[1] =TFTP_DATA;				
+				block++;
+				out_data[2] =0;
+				out_data[3] =block;	
 
-				len =+ TFTP_HDR_LEN;
+				len += TFTP_HDR_LEN;
 			}
 			*out_len = len;
 
@@ -146,19 +150,19 @@ int tftpd_socket()
 	int fd;
 	int err = 0;
 	struct sockaddr_in addr;	
-	socklen_t addr_len = 0;
+	socklen_t addr_len = sizeof(struct sockaddr_in);
 	ssize_t len;
 	ssize_t snd_len;
 	
 	fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if(-1 == fd)
+	if(fd < 0)
 	{
 		PRINT_ERRNO();
 		return ERR_SOCKET_CREATE;
 	}
 
 	addr.sin_family = AF_INET;
-	addr.sin_port   = TFTPD_PORT;
+	addr.sin_port   = htons(TFTPD_PORT);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	err = bind(fd, (struct sockaddr*)&addr, sizeof(addr));
 	if(err)
@@ -185,8 +189,13 @@ int tftpd_socket()
 			PRINT_ERRNO();
 			break;
 		}
+
+		printf("rcv data:len=%u, %x%x%x%x\n", len, rcv_data_buff[0],rcv_data_buff[1],rcv_data_buff[2],rcv_data_buff[3]);
 		
 		tftpd_process(rcv_data_buff, len, snd_data_buff, &snd_len);
+		
+		printf("snd data:len=%u, %x%x%x%x\n", snd_len, snd_data_buff[0],snd_data_buff[1],snd_data_buff[2],snd_data_buff[3]);
+		printf("port=%u, ip=%d\n", addr.sin_port, addr.sin_addr.s_addr);
 		len = sendto(fd, snd_data_buff, snd_len, 0 , (struct sockaddr*)&addr, addr_len);
 		if(len <= 0)
 		{
@@ -196,24 +205,14 @@ int tftpd_socket()
 	}
 
 	close(fd);
-}
 
-void start(char *path)
-{
-	
+	return 1;
 }
 
 int main(int argc, char *argv[])
 {
-	int ret = 0;
-	
-	ret = parse(argc, argv);
-	if(1 == ret)
-	{
-		return 0;
-	}
-	
-	start(tftpd_path);
-	
+	tftpd_parse_path(argc, argv);
+
+	tftpd_socket();
 	return 0;
 }
